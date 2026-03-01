@@ -1,29 +1,34 @@
 import os
 import requests
 import json
-from datetime import datetime
-from flask import Flask
 import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 
-# ========== HTTP СЕРВЕР ДЛЯ RAILWAY HEALTHCHECK ==========
-# Это заставляет Railway думать, что у нас есть веб-сервер
-http_app = Flask(__name__)
+# ========== ПРОСТОЙ HTTP СЕРВЕР ДЛЯ RAILWAY HEALTHCHECK ==========
+# Этот сервер гарантированно работает без сложных зависимостей
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+    
+    def log_message(self, format, *args):
+        pass  # Не пишем логи на каждый запрос
 
-@http_app.route('/')
-@http_app.route('/health')
-def health():
-    return 'OK', 200
-
-def run_http():
+def run_health_server():
     port = int(os.environ.get('PORT', 8080))
-    http_app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    print(f"✅ Healthcheck server running on port {port}")
+    server.serve_forever()
 
-# Запускаем HTTP сервер в отдельном потоке
-http_thread = threading.Thread(target=run_http, daemon=True)
-http_thread.start()
-# ==========================================================
+# Запускаем сервер в фоновом потоке
+health_thread = threading.Thread(target=run_health_server, daemon=True)
+health_thread.start()
+# ==================================================================
 
 # --- Состояния для разговора ---
 WALLET1, WALLET2 = range(2)
