@@ -2,6 +2,7 @@ import os
 import requests
 import json
 import threading
+import asyncio
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from telegram import Update
