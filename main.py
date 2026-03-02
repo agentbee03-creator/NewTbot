@@ -8,6 +8,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 import base64
 import hashlib
+import dns.resolver
 
 # ========== HTTP СЕРВЕР ДЛЯ RAILWAY HEALTHCHECK ==========
 class HealthHandler(BaseHTTPRequestHandler):
@@ -35,7 +36,7 @@ WALLET1, WALLET2 = range(2)
 
 # --- Получаем ключи из переменных окружения ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN')
-TONCENTER_API_KEY = os.environ.get('TONAPI_KEY')  # TonCenter принимает API ключ
+TONCENTER_API_KEY = os.environ.get('TONAPI_KEY')
 
 print(f"🚀 Запуск бота...")
 print(f"🔑 TONCENTER_API_KEY загружен: {'✅' if TONCENTER_API_KEY else '❌'}")
@@ -57,16 +58,12 @@ def normalize_address(addr: str) -> str:
     if addr.startswith('0:'):
         return addr
     if addr.startswith(('EQ', 'UQ')):
-        # Декодируем base64 адрес в raw формат
         try:
-            # Добавляем padding если нужно
             addr_base64 = addr.replace('-', '+').replace('_', '/')
             if len(addr_base64) % 4:
                 addr_base64 += '=' * (4 - len(addr_base64) % 4)
             
-            # Декодируем
             decoded = base64.b64decode(addr_base64)
-            # Первый байт - флаг, остальные 32 байта - адрес
             if len(decoded) == 33:
                 return '0:' + decoded[1:].hex()
         except:
@@ -86,8 +83,6 @@ async def resolve_domain(domain: str) -> str:
     if not domain.endswith('.ton'):
         return domain
     
-    # Используем DNS для разрешения .ton доменов
-    import dns.resolver
     try:
         answers = dns.resolver.resolve(f'_tonconnect.{domain}', 'TXT')
         for rdata in answers:
@@ -100,74 +95,98 @@ async def resolve_domain(domain: str) -> str:
 
 # --- Получение транзакций через TonCenter API ---
 async def get_transactions_page(address: str, limit: int = 100, lt: int = None, hash: str = None):
-    """Получает одну страницу транзакций с использованием API ключа"""
+    """Получает одну страницу транзакций"""
     session = await get_http_session()
     
     params = {
         'address': address,
         'limit': limit
     }
-    if lt and hash:
+    if lt and hash and lt != 0:
         params['lt'] = lt
         params['hash'] = hash
     
     headers = {}
     if TONCENTER_API_KEY:
         headers['X-API-Key'] = TONCENTER_API_KEY
-        print(f"🔑 Использую API ключ для запроса")
     
     try:
         async with session.get('https://toncenter.com/api/v2/getTransactions', 
                                params=params, headers=headers) as resp:
-            print(f"📡 Статус ответа: {resp.status}")
-            
             if resp.status == 200:
                 data = await resp.json()
                 if data.get('ok'):
-                    result = data.get('result', [])
-                    print(f"✅ Получено {len(result)} транзакций")
-                    return result
-                else:
-                    print(f"❌ API вернул ошибку: {data.get('error')}")
-                    return []
+                    return data.get('result', [])
             elif resp.status == 429:
-                print("⚠️ Слишком много запросов (429). Увеличиваю паузу...")
+                print("⚠️ Rate limit, жду 2 секунды...")
                 await asyncio.sleep(2)
-                return []  # вернем пустой список, чтобы цикл повторился
-            else:
-                print(f"❌ Ошибка HTTP: {resp.status}")
-                return []
+                return None  # None значит "попробуй еще раз"
+            return []
     except Exception as e:
         print(f"❌ Ошибка получения транзакций: {e}")
         return []
 
-async def get_all_transactions(address: str, max_txs: int = 1000) -> list:
+async def get_all_transactions(address: str, max_txs: int = 2000) -> list:
     """Загружает ВСЕ транзакции кошелька с пагинацией"""
     raw_addr = eq_to_raw(address)
     all_txs = []
-    lt = None
-    tx_hash = None
+    lt = 0
+    tx_hash = ""
+    page_num = 1
+    retry_count = 0
     
     print(f"🔍 Загружаю транзакции для {address[:10]}...")
     
-    while len(all_txs) < max_txs:
+    while len(all_txs) < max_txs and retry_count < 3:
+        print(f"📄 Страница {page_num} (lt={lt})...")
+        
         page = await get_transactions_page(raw_addr, 100, lt, tx_hash)
+        
+        # Если получили None из-за rate limit, повторяем
+        if page is None:
+            retry_count += 1
+            continue
+        
+        retry_count = 0  # сброс счетчика
+        
         if not page:
+            print("📌 Страница пуста — завершаем")
             break
         
+        # Добавляем транзакции
         all_txs.extend(page)
         print(f"✅ Загружено {len(all_txs)} транзакций")
         
-        # Получаем параметры для следующей страницы
-        if page and len(page) > 0:
-            last_tx = page[-1]
-            lt = last_tx.get('transaction_id', {}).get('lt')
-            tx_hash = last_tx.get('transaction_id', {}).get('hash')
-        else:
+        # Если получили меньше 100, значит это последняя страница
+        if len(page) < 100:
+            print("📌 Получено меньше 100 транзакций — последняя страница")
             break
         
-        # Небольшая пауза между запросами
-        await asyncio.sleep(0.3)
+        # Получаем параметры для следующей страницы
+        last_tx = page[-1]
+        if 'transaction_id' in last_tx:
+            new_lt = last_tx['transaction_id'].get('lt')
+            new_hash = last_tx['transaction_id'].get('hash')
+            
+            # Если lt не изменился — значит мы зациклились
+            if new_lt == lt:
+                print("⚠️ lt не изменился, завершаем")
+                break
+            
+            lt = new_lt
+            tx_hash = new_hash
+            print(f"➡️ Следующая страница: lt={lt}")
+        else:
+            print("⚠️ Нет transaction_id, завершаем")
+            break
+        
+        page_num += 1
+        
+        # Пауза между страницами
+        if TONCENTER_API_KEY:
+            await asyncio.sleep(0.3)
+        else:
+            await asyncio.sleep(1.1)
     
     print(f"✅ Всего загружено {len(all_txs)} транзакций")
     return all_txs
@@ -193,10 +212,11 @@ async def calculate_flow(wallet_a: str, wallet_b: str):
     print(f"🔄 Анализ {a_raw[:10]}... <-> {b_raw[:10]}...")
     
     # Загружаем все транзакции первого кошелька
-    txs = await get_all_transactions(a_raw)
+    txs = await get_all_transactions(a_raw, max_txs=2000)
     
     sent_nano = 0
     received_nano = 0
+    tx_count = 0
     
     for tx in txs:
         try:
@@ -207,6 +227,8 @@ async def calculate_flow(wallet_a: str, wallet_b: str):
                 if src == b_raw:
                     val = int(in_msg.get('value', 0))
                     received_nano += val
+                    tx_count += 1
+                    print(f"  ✓ Найдено входящих: {val/1e9} TON")
             
             # Исходящие (A отправил B)
             for out_msg in tx.get('out_msgs', []):
@@ -214,6 +236,8 @@ async def calculate_flow(wallet_a: str, wallet_b: str):
                 if dst == b_raw:
                     val = int(out_msg.get('value', 0))
                     sent_nano += val
+                    tx_count += 1
+                    print(f"  ✓ Найдено исходящих: {val/1e9} TON")
         except Exception as e:
             print(f"⚠️ Ошибка обработки транзакции: {e}")
             continue
@@ -222,7 +246,7 @@ async def calculate_flow(wallet_a: str, wallet_b: str):
     sent = sent_nano / 1_000_000_000
     received = received_nano / 1_000_000_000
     
-    print(f"📊 ИТОГ: Получено={received:.4f}TON, Отправлено={sent:.4f}TON")
+    print(f"📊 ИТОГ: Получено={received:.4f}TON, Отправлено={sent:.4f}TON, всего транзакций={tx_count}")
     
     return sent, received
 
@@ -252,7 +276,7 @@ async def get_wallet2(update: Update, context: ContextTypes.DEFAULT_TYPE):
     wallet2 = update.message.text.strip()
     wallet1 = context.user_data.get('wallet1')
     
-    status_msg = await update.message.reply_text("🔄 Анализирую блокчейн... Это займет некоторое время ⏳")
+    status_msg = await update.message.reply_text("🔄 Анализирую блокчейн... Это может занять до минуты ⏳")
     
     try:
         sent, received = await calculate_flow(wallet1, wallet2)
