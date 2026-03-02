@@ -100,7 +100,7 @@ async def resolve_domain(domain: str) -> str:
 
 # --- Получение транзакций через TonCenter API ---
 async def get_transactions_page(address: str, limit: int = 100, lt: int = None, hash: str = None):
-    """Получает одну страницу транзакций"""
+    """Получает одну страницу транзакций с использованием API ключа"""
     session = await get_http_session()
     
     params = {
@@ -114,15 +114,29 @@ async def get_transactions_page(address: str, limit: int = 100, lt: int = None, 
     headers = {}
     if TONCENTER_API_KEY:
         headers['X-API-Key'] = TONCENTER_API_KEY
+        print(f"🔑 Использую API ключ для запроса")
     
     try:
         async with session.get('https://toncenter.com/api/v2/getTransactions', 
                                params=params, headers=headers) as resp:
+            print(f"📡 Статус ответа: {resp.status}")
+            
             if resp.status == 200:
                 data = await resp.json()
                 if data.get('ok'):
-                    return data.get('result', [])
-            return []
+                    result = data.get('result', [])
+                    print(f"✅ Получено {len(result)} транзакций")
+                    return result
+                else:
+                    print(f"❌ API вернул ошибку: {data.get('error')}")
+                    return []
+            elif resp.status == 429:
+                print("⚠️ Слишком много запросов (429). Увеличиваю паузу...")
+                await asyncio.sleep(2)
+                return []  # вернем пустой список, чтобы цикл повторился
+            else:
+                print(f"❌ Ошибка HTTP: {resp.status}")
+                return []
     except Exception as e:
         print(f"❌ Ошибка получения транзакций: {e}")
         return []
