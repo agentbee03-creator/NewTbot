@@ -225,19 +225,19 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # --- Запуск бота ---
 def main():
+    # Создаем новый цикл событий
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Создаем приложение бота
     app = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
-    conv_handler = ConversationHandler(
-        entry_points=[CommandHandler('calc', calc_start)],
-        states={
-            WALLET1: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_wallet1)],
-            WALLET2: [MessageHandler(filters.TEXT & ~filters.COMMAND, get_wallet2)],
-        },
-        fallbacks=[CommandHandler('cancel', cancel)],
-    )
-    
+    # Добавляем обработчики
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
+    
+    # Принудительно сбрасываем вебхук
+    loop.run_until_complete(app.bot.delete_webhook(drop_pending_updates=True))
     
     print("✅ Бот запущен и готов к работе!")
 
