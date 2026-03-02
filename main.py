@@ -67,14 +67,15 @@ test_api()
 
 # --- Функция для получения транзакций ---
 def get_all_transactions(wallet_address, limit=50):
-    """Получает все транзакции кошелька"""
+    """Получает все транзакции кошелька с детальным логом"""
     url = f"https://tonapi.io/v2/accounts/{wallet_address}/events"
     
     headers = {}
     if TONAPI_KEY:
         headers['Authorization'] = f'Bearer {TONAPI_KEY}'
     
-    print(f"🔍 Запрашиваю транзакции для {wallet_address[:6]}...")
+    print(f"🔍 Запрашиваю URL: {url}")
+    print(f"🔑 С заголовками: {headers}")
     
     try:
         response = requests.get(url, headers=headers, params={'limit': limit}, timeout=10)
@@ -84,13 +85,25 @@ def get_all_transactions(wallet_address, limit=50):
             data = response.json()
             events = data.get('events', [])
             print(f"✅ Получено событий: {len(events)}")
+            
+            # Сохраняем ПЕРВОЕ событие для анализа
+            if events:
+                import json
+                first_event = json.dumps(events[0], indent=2)
+                print(f"📦 ПЕРВОЕ СОБЫТИЕ (первые 500 символов):")
+                print(first_event[:500])
+            else:
+                print("⚠️ Событий нет — возможно, кошелек пуст или API не отдает историю")
+                
             return events
         else:
-            print(f"❌ Ошибка API: {response.status_code} - {response.text[:200]}")
+            print(f"❌ Ошибка API: {response.status_code}")
+            print(f"❌ Текст ошибки: {response.text[:200]}")
             return []
     except Exception as e:
         print(f"❌ Исключение при запросе: {e}")
         return []
+        
 
 def calculate_transfers(wallet_a, wallet_b):
     """Считает переводы между двумя кошельками"""
