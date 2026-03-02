@@ -239,6 +239,12 @@ def main():
     app.add_handler(conv_handler)
     
     print("✅ Бот запущен и готов к работе!")
+
+        # >>>>>>>>>>>>>>> НОВАЯ СТРОКА >>>>>>>>>>>>>>>
+    # Принудительно сбрасываем вебхук и старые подключения
+    asyncio.run(app.bot.delete_webhook(drop_pending_updates=True))
+    # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
+
     app.run_polling()
 
 if __name__ == '__main__':
