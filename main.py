@@ -249,8 +249,8 @@ async def calculate_flow(wallet_a: str, wallet_b: str):
     
     print(f"🔄 Анализ {a_raw[:10]}... <-> {b_raw[:10]}...")
     
-    # Загружаем все транзакции первого кошелька (до 5000)
-    txs = await get_all_transactions(a_raw, max_txs=5000)
+    # Загружаем все транзакции первого кошелька (до 10000)
+    txs = await get_all_transactions(a_raw, max_txs=10000)
     
     sent_nano = 0
     received_nano = 0
