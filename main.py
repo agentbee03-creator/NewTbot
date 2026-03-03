@@ -2,6 +2,7 @@ import os
 import aiohttp
 import asyncio
 import threading
+import json  # ← ДОБАВЛЕНО
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from telegram import Update
@@ -95,7 +96,7 @@ async def resolve_domain(domain: str) -> str:
 
 # --- Получение транзакций через TonCenter API ---
 async def get_transactions_page(address: str, limit: int = 100, lt: int = None, hash: str = None):
-    """Получает одну страницу транзакций"""
+    """Получает одну страницу транзакций с защитой от бинарных ответов"""
     session = await get_http_session()
     
     params = {
@@ -114,14 +115,25 @@ async def get_transactions_page(address: str, limit: int = 100, lt: int = None, 
         async with session.get('https://toncenter.com/api/v2/getTransactions', 
                                params=params, headers=headers) as resp:
             if resp.status == 200:
-                data = await resp.json()
-                if data.get('ok'):
-                    return data.get('result', [])
+                # Пробуем получить как текст
+                text = await resp.text()
+                try:
+                    data = json.loads(text)
+                    if data.get('ok'):
+                        return data.get('result', [])
+                    else:
+                        print(f"❌ API вернул ошибку: {data.get('error')}")
+                        return []
+                except json.JSONDecodeError:
+                    print(f"❌ Не удалось распарсить JSON. Первые 200 символов: {text[:200]}")
+                    return []
             elif resp.status == 429:
                 print("⚠️ Rate limit, жду 2 секунды...")
                 await asyncio.sleep(2)
                 return None
-            return []
+            else:
+                print(f"❌ Ошибка HTTP: {resp.status}")
+                return []
     except Exception as e:
         print(f"❌ Ошибка получения транзакций: {e}")
         return []
@@ -391,20 +403,13 @@ def main():
     
     print("✅ Бот запущен и готов к работе!")
     
-    # Запускаем
+    # Запускаем (ТОЛЬКО ОДИН РАЗ!)
     try:
         app.run_polling()
     except Exception as e:
         print(f"❌ Ошибка при работе: {e}")
     finally:
         print("🔄 Завершение работы...")
-        # Не закрываем цикл принудительно
-        # loop.close()
-    
-    # Запускаем
-    try:
-        app.run_polling()
-    finally:
         loop.run_until_complete(shutdown())
 
 if __name__ == '__main__':
