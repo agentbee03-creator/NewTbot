@@ -394,6 +394,16 @@ def main():
     # Запускаем
     try:
         app.run_polling()
+    except Exception as e:
+        print(f"❌ Ошибка при работе: {e}")
+    finally:
+        print("🔄 Завершение работы...")
+        # Не закрываем цикл принудительно
+        # loop.close()
+    
+    # Запускаем
+    try:
+        app.run_polling()
     finally:
         loop.run_until_complete(shutdown())
 
