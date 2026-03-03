@@ -120,46 +120,61 @@ async def get_transactions_page(address: str, limit: int = 100, lt: int = None, 
             elif resp.status == 429:
                 print("⚠️ Rate limit, жду 2 секунды...")
                 await asyncio.sleep(2)
-                return None  # None значит "попробуй еще раз"
+                return None
             return []
     except Exception as e:
         print(f"❌ Ошибка получения транзакций: {e}")
         return []
 
-async def get_all_transactions(address: str, max_txs: int = 2000) -> list:
-    """Загружает ВСЕ транзакции кошелька с пагинацией"""
+async def get_all_transactions(address: str, max_txs: int = 5000) -> list:
+    """Загружает ВСЕ транзакции кошелька с пагинацией (до 5000)"""
     raw_addr = eq_to_raw(address)
     all_txs = []
     lt = 0
     tx_hash = ""
     page_num = 1
     retry_count = 0
+    empty_pages = 0
     
-    print(f"🔍 Загружаю транзакции для {address[:10]}...")
+    print(f"🔍 Загружаю транзакции для {address[:10]}... (макс {max_txs})")
     
-    while len(all_txs) < max_txs and retry_count < 3:
-        print(f"📄 Страница {page_num} (lt={lt})...")
+    while len(all_txs) < max_txs and empty_pages < 3:
+        print(f"📄 Страница {page_num} (lt={lt}, всего загружено={len(all_txs)})...")
         
         page = await get_transactions_page(raw_addr, 100, lt, tx_hash)
         
-        # Если получили None из-за rate limit, повторяем
         if page is None:
             retry_count += 1
+            if retry_count > 3:
+                print("❌ Слишком много ретраев, завершаем")
+                break
             continue
         
-        retry_count = 0  # сброс счетчика
+        retry_count = 0
         
         if not page:
-            print("📌 Страница пуста — завершаем")
-            break
+            empty_pages += 1
+            print(f"📌 Пустая страница ({empty_pages}/3)")
+            await asyncio.sleep(1)
+            continue
+        
+        empty_pages = 0
         
         # Добавляем транзакции
         all_txs.extend(page)
         print(f"✅ Загружено {len(all_txs)} транзакций")
         
-        # Если получили меньше 100, значит это последняя страница
+        # Если получили меньше 100, возможно это последняя страница
         if len(page) < 100:
-            print("📌 Получено меньше 100 транзакций — последняя страница")
+            print(f"📌 Страница содержит {len(page)} транзакций (<100)")
+            # Попробуем еще раз, может есть еще
+            if len(page) > 0:
+                last_tx = page[-1]
+                if 'transaction_id' in last_tx:
+                    lt = last_tx['transaction_id'].get('lt')
+                    tx_hash = last_tx['transaction_id'].get('hash')
+                    print(f"➡️ Пробуем следующую страницу с lt={lt}")
+                    continue
             break
         
         # Получаем параметры для следующей страницы
@@ -168,7 +183,6 @@ async def get_all_transactions(address: str, max_txs: int = 2000) -> list:
             new_lt = last_tx['transaction_id'].get('lt')
             new_hash = last_tx['transaction_id'].get('hash')
             
-            # Если lt не изменился — значит мы зациклились
             if new_lt == lt:
                 print("⚠️ lt не изменился, завершаем")
                 break
@@ -183,10 +197,7 @@ async def get_all_transactions(address: str, max_txs: int = 2000) -> list:
         page_num += 1
         
         # Пауза между страницами
-        if TONCENTER_API_KEY:
-            await asyncio.sleep(0.3)
-        else:
-            await asyncio.sleep(1.1)
+        await asyncio.sleep(0.3 if TONCENTER_API_KEY else 1.1)
     
     print(f"✅ Всего загружено {len(all_txs)} транзакций")
     return all_txs
@@ -211,8 +222,8 @@ async def calculate_flow(wallet_a: str, wallet_b: str):
     
     print(f"🔄 Анализ {a_raw[:10]}... <-> {b_raw[:10]}...")
     
-    # Загружаем все транзакции первого кошелька
-    txs = await get_all_transactions(a_raw, max_txs=2000)
+    # Загружаем все транзакции первого кошелька (до 5000)
+    txs = await get_all_transactions(a_raw, max_txs=5000)
     
     sent_nano = 0
     received_nano = 0
