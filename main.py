@@ -127,7 +127,7 @@ async def get_transactions_page(address: str, limit: int = 100, lt: int = None, 
         return []
 
 async def get_all_transactions(address: str, max_txs: int = 5000) -> list:
-    """Загружает ВСЕ транзакции кошелька с пагинацией (до 5000)"""
+    """Загружает ВСЕ транзакции кошелька с защитой от зацикливания"""
     raw_addr = eq_to_raw(address)
     all_txs = []
     lt = 0
@@ -135,6 +135,8 @@ async def get_all_transactions(address: str, max_txs: int = 5000) -> list:
     page_num = 1
     retry_count = 0
     empty_pages = 0
+    last_lt = None
+    same_lt_count = 0
     
     print(f"🔍 Загружаю транзакции для {address[:10]}... (макс {max_txs})")
     
@@ -160,21 +162,46 @@ async def get_all_transactions(address: str, max_txs: int = 5000) -> list:
         
         empty_pages = 0
         
-        # Добавляем транзакции
-        all_txs.extend(page)
-        print(f"✅ Загружено {len(all_txs)} транзакций")
+        # Проверяем зацикливание
+        current_lt = page[-1].get('transaction_id', {}).get('lt') if page else None
+        if current_lt == last_lt:
+            same_lt_count += 1
+            print(f"⚠️ Обнаружено зацикливание ({same_lt_count}/5)")
+            if same_lt_count >= 5:
+                print("❌ Слишком много повторений, завершаем")
+                break
+        else:
+            same_lt_count = 0
+            last_lt = current_lt
+        
+        # Добавляем новые транзакции (избегаем дубликатов)
+        new_txs = [tx for tx in page if tx not in all_txs]
+        if not new_txs:
+            print("📌 Нет новых транзакций, завершаем")
+            break
+            
+        all_txs.extend(new_txs)
+        print(f"✅ Загружено {len(all_txs)} транзакций (+{len(new_txs)} новых)")
         
         # Если получили меньше 100, возможно это последняя страница
         if len(page) < 100:
             print(f"📌 Страница содержит {len(page)} транзакций (<100)")
-            # Попробуем еще раз, может есть еще
-            if len(page) > 0:
-                last_tx = page[-1]
-                if 'transaction_id' in last_tx:
-                    lt = last_tx['transaction_id'].get('lt')
-                    tx_hash = last_tx['transaction_id'].get('hash')
-                    print(f"➡️ Пробуем следующую страницу с lt={lt}")
-                    continue
+            
+            # Проверяем, есть ли еще транзакции
+            last_tx = page[-1]
+            if 'transaction_id' in last_tx:
+                next_lt = last_tx['transaction_id'].get('lt')
+                next_hash = last_tx['transaction_id'].get('hash')
+                
+                # Если lt такой же как текущий — это конец
+                if next_lt == lt:
+                    print("📌 lt не изменился — достигнут конец истории")
+                    break
+                
+                lt = next_lt
+                tx_hash = next_hash
+                print(f"➡️ Пробуем следующую страницу с lt={lt}")
+                continue
             break
         
         # Получаем параметры для следующей страницы
@@ -184,7 +211,7 @@ async def get_all_transactions(address: str, max_txs: int = 5000) -> list:
             new_hash = last_tx['transaction_id'].get('hash')
             
             if new_lt == lt:
-                print("⚠️ lt не изменился, завершаем")
+                print("⚠️ lt не изменился — достигнут конец истории")
                 break
             
             lt = new_lt
@@ -199,7 +226,7 @@ async def get_all_transactions(address: str, max_txs: int = 5000) -> list:
         # Пауза между страницами
         await asyncio.sleep(0.3 if TONCENTER_API_KEY else 1.1)
     
-    print(f"✅ Всего загружено {len(all_txs)} транзакций")
+    print(f"✅ Всего загружено {len(all_txs)} уникальных транзакций")
     return all_txs
 
 async def calculate_flow(wallet_a: str, wallet_b: str):
