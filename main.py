@@ -2,7 +2,7 @@ import os
 import aiohttp
 import asyncio
 import threading
-import json  # ← ДОБАВЛЕНО
+import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
 from telegram import Update
@@ -114,19 +114,38 @@ async def get_transactions_page(address: str, limit: int = 100, lt: int = None, 
     try:
         async with session.get('https://toncenter.com/api/v2/getTransactions', 
                                params=params, headers=headers) as resp:
+            
             if resp.status == 200:
-                # Пробуем получить как текст
-                text = await resp.text()
+                # Читаем как бинарные данные
+                content = await resp.read()
+                
+                # Пробуем разные кодировки
                 try:
+                    # Сначала UTF-8
+                    text = content.decode('utf-8')
                     data = json.loads(text)
                     if data.get('ok'):
                         return data.get('result', [])
                     else:
                         print(f"❌ API вернул ошибку: {data.get('error')}")
                         return []
+                except UnicodeDecodeError:
+                    # Если не UTF-8, пробуем latin-1
+                    try:
+                        text = content.decode('latin-1')
+                        data = json.loads(text)
+                        if data.get('ok'):
+                            return data.get('result', [])
+                        else:
+                            print(f"❌ API вернул ошибку: {data.get('error')}")
+                            return []
+                    except:
+                        print(f"⚠️ Не удалось декодировать ответ, пропускаем страницу")
+                        return []
                 except json.JSONDecodeError:
-                    print(f"❌ Не удалось распарсить JSON. Первые 200 символов: {text[:200]}")
+                    print(f"⚠️ Невалидный JSON, пропускаем страницу")
                     return []
+            
             elif resp.status == 429:
                 print("⚠️ Rate limit, жду 2 секунды...")
                 await asyncio.sleep(2)
@@ -134,9 +153,12 @@ async def get_transactions_page(address: str, limit: int = 100, lt: int = None, 
             else:
                 print(f"❌ Ошибка HTTP: {resp.status}")
                 return []
+                
     except Exception as e:
         print(f"❌ Ошибка получения транзакций: {e}")
         return []
+    
+    return []
 
 async def get_all_transactions(address: str, max_txs: int = 10000) -> list:
     """Загружает ВСЕ транзакции кошелька с защитой от зацикливания"""
@@ -337,7 +359,7 @@ async def get_wallet2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         b_short = wallet2[:6] + "…" + wallet2[-4:] if len(wallet2) > 20 else wallet2
         
         if sent == 0 and received == 0:
-            text = f"📭 Транзакций между кошельками не найдено\n\n`{a_short}` ↔ `{b_short}`"
+            text = f"📭 Транзакций между кошельками не найдено (или я поломался, извините)\n\n`{a_short}` ↔ `{b_short}`"
         else:
             sign = "➕" if diff > 0 else "➖" if diff < 0 else "⚖️"
             
