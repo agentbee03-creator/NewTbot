@@ -321,23 +321,21 @@ async def get_wallet2(update: Update, context: ContextTypes.DEFAULT_TYPE):
         diff = received - sent
         
         # Короткие адреса для отображения
-        a_short = wallet1[:10] + "…" + wallet1[-6:] if len(wallet1) > 20 else wallet1
-        b_short = wallet2[:10] + "…" + wallet2[-6:] if len(wallet2) > 20 else wallet2
+        a_short = wallet1[:6] + "…" + wallet1[-4:] if len(wallet1) > 20 else wallet1
+        b_short = wallet2[:6] + "…" + wallet2[-4:] if len(wallet2) > 20 else wallet2
         
         if sent == 0 and received == 0:
             text = f"📭 Транзакций между кошельками не найдено\n\n`{a_short}` ↔ `{b_short}`"
         else:
             sign = "➕" if diff > 0 else "➖" if diff < 0 else "⚖️"
-            owes = "B должен A" if diff > 0 else "A должен B" if diff < 0 else "В расчете"
             
             text = (
                 f"📊 **Взаиморасчеты**\n\n"
                 f"A: `{a_short}`\n"
                 f"B: `{b_short}`\n\n"
-                f"📥 A получил от B: `{received:.4f}` TON\n"
-                f"📤 A отправил B: `{sent:.4f}` TON\n\n"
-                f"⚖️ **{sign} {abs(diff):.4f} TON**\n"
-                f"_{owes}_"
+                f"📥 A отправил на B: `{sent:.4f}` TON\n"
+                f"📤 A получил от B: `{received:.4f}` TON\n\n"
+                f"⚖️ **{sign} {abs(diff):.4f} TON**"
             )
         
         await status_msg.delete()
