@@ -126,7 +126,7 @@ async def get_transactions_page(address: str, limit: int = 100, lt: int = None, 
         print(f"❌ Ошибка получения транзакций: {e}")
         return []
 
-async def get_all_transactions(address: str, max_txs: int = 5000) -> list:
+async def get_all_transactions(address: str, max_txs: int = 10000) -> list:
     """Загружает ВСЕ транзакции кошелька с защитой от зацикливания"""
     raw_addr = eq_to_raw(address)
     all_txs = []
