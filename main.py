@@ -4,7 +4,7 @@ import asyncio
 import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime
-from telegram import Update
+from telegram import Update, ReplyKeyboardMarkup, KeyboardButton
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes, ConversationHandler
 import base64
 import hashlib
@@ -290,11 +290,37 @@ async def calculate_flow(wallet_a: str, wallet_b: str):
 
 # --- Команда /start ---
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Создаем кнопку
+    button = KeyboardButton("🚀 Рассчитать взаиморасчеты")
+    
+    # Создаем клавиатуру с кнопкой
+    reply_markup = ReplyKeyboardMarkup(
+        [[button]],
+        resize_keyboard=True,
+        one_time_keyboard=False
+    )
+    
     await update.message.reply_text(
         "👋 Привет! Я помогу посчитать взаиморасчеты между TON кошельками.\n\n"
-        "Просто отправь команду /calc и следуй инструкциям.\n"
-        "Поддерживаю .ton домены!"
+        "Нажми кнопку ниже, чтобы начать 👇",
+        reply_markup=reply_markup
     )
+
+# --- Обработчик кнопки ---
+async def handle_button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатие кнопки"""
+    if update.message.text == "🚀 Рассчитать взаиморасчеты":
+        await calc_start(update, context)
+    else:
+        # Если текст не совпадает с кнопкой, возможно это уже ввод адреса
+        text = update.message.text.strip()
+        if text.startswith(('EQ', 'UQ')) or text.endswith('.ton'):
+            # Если это похоже на адрес, передаем в calc_start
+            context.user_data['wallet1'] = text
+            await update.message.reply_text("✅ Первый кошелек сохранен.\n\n🔹 Теперь введите **второй кошелек**:")
+            return WALLET2
+        else:
+            await update.message.reply_text("Используй кнопку или команду /calc")
 
 # --- Команда /calc ---
 async def calc_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -383,7 +409,9 @@ def main():
         fallbacks=[CommandHandler('cancel', cancel)],
     )
     
+    # Добавляем обработчики
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_button))
     app.add_handler(conv_handler)
     
     # Сбрасываем вебхук
